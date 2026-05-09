@@ -1,0 +1,12 @@
+.git
+.ssh
+.tmp
+.pip-cache
+.npm-cache
+.runtime_deps
+node_modules
+frontend/node_modules
+frontend/.next
+backend/app/**/__pycache__
+*.pyc
+
