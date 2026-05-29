@@ -84,9 +84,9 @@ def _max_get_me(base_url: str, token: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            return {"ok": True, "status": response.status, "body": response.read().decode("utf-8", errors="replace")[:600]}
+            return {"ok": True, "status": response.status}
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "status": exc.code, "body": exc.read().decode("utf-8", errors="replace")[:600]}
+        return {"ok": False, "status": exc.code}
 
 
 class IntegrationUpdate(BaseModel):
@@ -325,7 +325,17 @@ def update_integration(integration_id: int, payload: IntegrationUpdate, db: Sess
     item = db.get(Integration, integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if item.provider == "max":
+        if "secret_ref" in updates and updates["secret_ref"] != PROVIDER_SECRET_NAMES["max"]:
+            raise HTTPException(status_code=400, detail=f"secret_ref for max must be {PROVIDER_SECRET_NAMES['max']}")
+        if "config_json" in updates and isinstance(updates["config_json"], dict):
+            config = dict(updates["config_json"])
+            config["MAX_API_BASE_URL"] = MAX_DEFAULT_BASE_URL
+            config.pop("api_base_url", None)
+            config.pop("allow_custom_base_url", None)
+            updates["config_json"] = config
+    for key, value in updates.items():
         setattr(item, key, value)
     log_activity(
         db,
@@ -352,11 +362,8 @@ def test_integration(integration_id: int, db: Session = Depends(get_db)) -> dict
     test_result: dict[str, Any] = {}
     if item.provider == "max":
         config = dict(item.config_json or {})
-        base_url = config.get("MAX_API_BASE_URL") or config.get("api_base_url") or MAX_DEFAULT_BASE_URL
-        try:
-            token = resolve_secret_value(db, "max", item.secret_ref or "MAX_BOT_TOKEN")
-        except Exception:
-            token = os.getenv(item.secret_ref or "MAX_BOT_TOKEN")
+        base_url = MAX_DEFAULT_BASE_URL
+        token = resolve_secret_value(db, "max", PROVIDER_SECRET_NAMES["max"])
         dry_run_payload = {"method": "POST", "url": f"{base_url.rstrip('/')}/messages", "headers": {"Authorization": "***"}, "body": {"chat_id": config.get("default_admin_chat_id"), "text": "ERA dry-run admin test"}}
         test_result = {
             "base_url": base_url,
@@ -364,12 +371,9 @@ def test_integration(integration_id: int, db: Session = Depends(get_db)) -> dict
             "token_status": "found" if token else "missing",
             "dry_run_message_payload": dry_run_payload,
         }
-        if base_url != MAX_DEFAULT_BASE_URL and not config.get("allow_custom_base_url"):
+        if not token:
             ok = False
-            error = "MAX_API_BASE_URL must be https://platform-api.max.ru unless allow_custom_base_url=true"
-        elif not item.secret_ref or not token:
-            ok = False
-            error = f"Bot token env {item.secret_ref or '(empty)'} is not configured"
+            error = f"Bot token env {PROVIDER_SECRET_NAMES['max']} is not configured"
         else:
             me_result = _max_get_me(base_url, token)
             test_result["me"] = me_result
@@ -848,7 +852,17 @@ def update_agent_config(config_id: int, payload: AgentConfigUpdate, db: Session 
     item = db.get(AgentConfig, config_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Agent config not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if item.provider == "max":
+        if "secret_ref" in updates and updates["secret_ref"] != PROVIDER_SECRET_NAMES["max"]:
+            raise HTTPException(status_code=400, detail=f"secret_ref for max must be {PROVIDER_SECRET_NAMES['max']}")
+        if "config_json" in updates and isinstance(updates["config_json"], dict):
+            config = dict(updates["config_json"])
+            config["MAX_API_BASE_URL"] = MAX_DEFAULT_BASE_URL
+            config.pop("api_base_url", None)
+            config.pop("allow_custom_base_url", None)
+            updates["config_json"] = config
+    for key, value in updates.items():
         setattr(item, key, value)
     log_activity(
         db,
