@@ -94,6 +94,28 @@ make smoke-owner-bot
 make smoke-editorial-quality-loop
 ```
 
+## Optional local Fooocus visuals
+
+Fooocus can be run locally in Docker as a separate image-generation UI for operator-reviewed MAX visuals.
+
+```bash
+make fooocus-up
+```
+
+UI:
+
+```text
+http://127.0.0.1:7865
+```
+
+Outputs are mounted to:
+
+```text
+./generated_media/fooocus
+```
+
+Full guide: [`docs/FOOOCUS_LOCAL.md`](docs/FOOOCUS_LOCAL.md)
+
 ## Operator guide
 
 HTML-инструкция для сотрудника:

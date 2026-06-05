@@ -1,0 +1,34 @@
+# Optional local Fooocus service for ERA_MEDIA visuals.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.fooocus.yml --profile fooocus up --build fooocus
+# UI:
+#   http://127.0.0.1:${FOOOCUS_PORT:-7865}
+#
+# Requirements:
+#   - Docker Desktop / Docker Engine
+#   - NVIDIA GPU + NVIDIA Container Toolkit for GPU mode
+#   - Enough disk space for SDXL models (20GB+ recommended)
+
+services:
+  fooocus:
+    profiles: ["fooocus"]
+    build:
+      context: ./docker/fooocus
+      args:
+        FOOOCUS_REF: ${FOOOCUS_REF:-main}
+    environment:
+      FOOOCUS_PORT: ${FOOOCUS_PORT:-7865}
+      FOOOCUS_LISTEN: 0.0.0.0
+      FOOOCUS_ARGS: ${FOOOCUS_ARGS:---preset realistic --always-download-new-model}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${FOOOCUS_PORT:-7865}:${FOOOCUS_PORT:-7865}"
+    volumes:
+      - fooocus_models:/opt/fooocus/models
+      - ./generated_media/fooocus:/opt/fooocus/outputs
+    gpus: all
+    restart: unless-stopped
+
+volumes:
+  fooocus_models:

@@ -1,6 +1,19 @@
-.PHONY: demo-data smoke-test smoke-control-plane smoke-ui smoke-ui-browser smoke-real-llm-dry-run smoke-prompt-quality smoke-source-ingestion smoke-rsshub-source-adapter smoke-first-edition smoke-secrets smoke-freshness-logic smoke-source-balance smoke-live-radar-quality smoke-agency-operating-loop smoke-editorial-voice-system smoke-editorial-director smoke-editorial-quality-loop newsroom-clean-slate-sources smoke-launch-readiness smoke-editor-day smoke-media-producer smoke-max-packaging smoke-owner-bot smoke-cost-optimizer smoke-zero-token-intake smoke-relay-channel smoke-ft-live-cheap smoke-daily-package smoke-ollama-provider-health smoke-brain-mode-local-gemma smoke-local-mode-blocks-openai smoke-local-mode-blocks-mock-operator-path smoke-agent-contract-registry smoke-agent-contract-versioning smoke-agent-run-contract-artifacts smoke-contract-compatibility-handoff smoke-contract-escalation smoke-agent-workbench-api smoke-local-brain-benchmark-thresholds smoke-editorial-contract-microsteps smoke-quality-loop-editorial-claim-filter smoke-senior-journalist-contract-repair smoke-local-mode-ignores-paid-token-budget smoke-max-channel-workspace smoke-channel-fit-contracts smoke-story-generation-dedupe
+.PHONY: demo-data smoke-test smoke-control-plane smoke-ui smoke-ui-browser smoke-real-llm-dry-run smoke-prompt-quality smoke-source-ingestion smoke-rsshub-source-adapter smoke-first-edition smoke-secrets smoke-freshness-logic smoke-source-balance smoke-live-radar-quality smoke-agency-operating-loop smoke-editorial-voice-system smoke-editorial-director smoke-editorial-quality-loop newsroom-clean-slate-sources smoke-launch-readiness smoke-editor-day smoke-media-producer smoke-max-packaging smoke-owner-bot smoke-cost-optimizer smoke-zero-token-intake smoke-relay-channel smoke-ft-live-cheap smoke-daily-package smoke-ollama-provider-health smoke-brain-mode-local-gemma smoke-local-mode-blocks-openai smoke-local-mode-blocks-mock-operator-path smoke-agent-contract-registry smoke-agent-contract-versioning smoke-agent-run-contract-artifacts smoke-contract-compatibility-handoff smoke-contract-escalation smoke-agent-workbench-api smoke-local-brain-benchmark-thresholds smoke-editorial-contract-microsteps smoke-quality-loop-editorial-claim-filter smoke-senior-journalist-contract-repair smoke-local-mode-ignores-paid-token-budget smoke-max-channel-workspace smoke-channel-fit-contracts smoke-story-generation-dedupe fooocus-up fooocus-down fooocus-logs fooocus-config
 
 BACKEND_PORT ?= 18000
+FOOOCUS_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.fooocus.yml --profile fooocus
+
+fooocus-up:
+	$(FOOOCUS_COMPOSE) up --build fooocus
+
+fooocus-down:
+	$(FOOOCUS_COMPOSE) down
+
+fooocus-logs:
+	$(FOOOCUS_COMPOSE) logs -f fooocus
+
+fooocus-config:
+	$(FOOOCUS_COMPOSE) config
 
 demo-data:
 	curl -fsS -X POST http://localhost:$(BACKEND_PORT)/api/dev/demo-data
