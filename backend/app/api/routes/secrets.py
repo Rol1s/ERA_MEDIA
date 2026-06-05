@@ -27,6 +27,7 @@ from app.services.settings import get_settings
 
 router = APIRouter()
 MAX_DEFAULT_BASE_URL = "https://platform-api.max.ru"
+TELEGRAM_DEFAULT_BASE_URL = "https://api.telegram.org"
 
 
 class SecretUpdate(BaseModel):
@@ -40,6 +41,22 @@ def _max_get_me(base_url: str, token: str) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/me",
         headers={"Authorization": token, "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return {"ok": True, "status": response.status, "body": response.read().decode("utf-8", errors="replace")[:600]}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "status": exc.code, "body": exc.read().decode("utf-8", errors="replace")[:600]}
+
+
+def _telegram_get_me(base_url: str, token: str) -> dict[str, Any]:
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/bot{token}/getMe",
+        headers={"Accept": "application/json"},
         method="GET",
     )
     try:
@@ -199,6 +216,11 @@ def test_secret(provider: str, secret_name: str, db: Session = Depends(get_db)) 
             ok = bool(result.get("ok"))
             if not ok:
                 error = f"MAX /me check failed: HTTP {result.get('status')}"
+        elif provider == "telegram":
+            result = _telegram_get_me(TELEGRAM_DEFAULT_BASE_URL, secret_value)
+            ok = bool(result.get("ok"))
+            if not ok:
+                error = f"Telegram getMe check failed: HTTP {result.get('status')}"
         else:
             raise LLMConfigurationError("Unsupported provider")
     except Exception as exc:

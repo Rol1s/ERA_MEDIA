@@ -41,6 +41,10 @@ export function openAISecret(secrets?: SecretsStatus | null) {
   return secrets?.providers.find((item) => item.provider === "openai") || null;
 }
 
+export function secretConfigured(status?: string | null) {
+  return status === "configured" || status === "verified";
+}
+
 export function providerModel(integrations: Integration[], provider: string) {
   return integrations.find((item) => item.provider === provider)?.config_json?.model || "";
 }

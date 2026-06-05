@@ -32,8 +32,18 @@ services:
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://frontend:3000}
       DEV_MODE: ${DEV_MODE:-true}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MAX_CONCURRENT_REQUESTS: ${OLLAMA_MAX_CONCURRENT_REQUESTS:-1}
+      LOCAL_LLM_QUEUE_TIMEOUT: ${LOCAL_LLM_QUEUE_TIMEOUT:-180}
+      LOCAL_LLM_REQUEST_TIMEOUT: ${LOCAL_LLM_REQUEST_TIMEOUT:-240}
+      LOCAL_LLM_CONTEXT_LENGTH: ${LOCAL_LLM_CONTEXT_LENGTH:-8192}
+      STORE_RAW_LLM_RESPONSE: ${STORE_RAW_LLM_RESPONSE:-false}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./generated_media:/app/generated_media
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,10 +68,20 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MAX_CONCURRENT_REQUESTS: ${OLLAMA_MAX_CONCURRENT_REQUESTS:-1}
+      LOCAL_LLM_QUEUE_TIMEOUT: ${LOCAL_LLM_QUEUE_TIMEOUT:-180}
+      LOCAL_LLM_REQUEST_TIMEOUT: ${LOCAL_LLM_REQUEST_TIMEOUT:-240}
+      LOCAL_LLM_CONTEXT_LENGTH: ${LOCAL_LLM_CONTEXT_LENGTH:-8192}
+      STORE_RAW_LLM_RESPONSE: ${STORE_RAW_LLM_RESPONSE:-false}
+    volumes:
+      - ./generated_media:/app/generated_media
     depends_on:
       backend:
         condition: service_healthy
-    command: celery -A app.workers.celery_app worker --loglevel=INFO
+    command: celery -A app.workers.celery_app worker --loglevel=INFO -Q era,celery --concurrency=${LOCAL_LLM_WORKER_CONCURRENCY:-1}
 
   scheduler:
     build:
@@ -72,6 +92,16 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MAX_CONCURRENT_REQUESTS: ${OLLAMA_MAX_CONCURRENT_REQUESTS:-1}
+      LOCAL_LLM_QUEUE_TIMEOUT: ${LOCAL_LLM_QUEUE_TIMEOUT:-180}
+      LOCAL_LLM_REQUEST_TIMEOUT: ${LOCAL_LLM_REQUEST_TIMEOUT:-240}
+      LOCAL_LLM_CONTEXT_LENGTH: ${LOCAL_LLM_CONTEXT_LENGTH:-8192}
+      STORE_RAW_LLM_RESPONSE: ${STORE_RAW_LLM_RESPONSE:-false}
+    volumes:
+      - ./generated_media:/app/generated_media
     depends_on:
       backend:
         condition: service_healthy
@@ -82,6 +112,8 @@ services:
       context: ./frontend
     environment:
       INTERNAL_API_URL: http://backend:8000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
     depends_on:

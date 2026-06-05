@@ -20,6 +20,7 @@ import {
   Radio,
   Repeat,
   ScrollText,
+  TrendingUp,
   Waypoints
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -32,6 +33,7 @@ const nav = [
   { href: "/source-items", label: "Материалы", icon: FileText },
   { href: "/topics", label: "Темы", icon: ListChecks },
   { href: "/posts", label: "Посты", icon: FileText },
+  { href: "/growth", label: "Growth", icon: TrendingUp },
   { href: "/calendar", label: "Календарь", icon: CalendarDays },
   { href: "/integrations", label: "Интеграции", icon: Plug },
   { href: "/notifications", label: "Уведомления", icon: Bell },

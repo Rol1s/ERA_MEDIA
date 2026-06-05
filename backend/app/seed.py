@@ -81,6 +81,7 @@ CHANNELS = [
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "system_mode": "mock",
+    "real_newsroom_mode": True,
     "global_agents_enabled": False,
     "global_routines_enabled": False,
     "global_publishing_enabled": False,
@@ -94,6 +95,42 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "notify_on_review_needed": True,
     "notify_on_failure": True,
     "notify_on_budget_warning": True,
+    "active_launch_channels": ["era-now", "era-food", "era-money"],
+}
+
+PUBLICATION_CHANNEL_OVERRIDES: dict[str, dict[str, Any]] = {
+    "era-now": {
+        "name": "Нерв мира",
+        "category": "news",
+        "description": "Главная лента: мир, Россия, война, политика, ЧС и события, которые меняют день.",
+        "status": "active",
+        "publish_mode": "semi_auto",
+        "auto_publish_enabled": True,
+        "posting_frequency_per_day": 5,
+        "daily_post_limit": 8,
+    },
+    "era-food": {
+        "name": "Нерв еды",
+        "category": "food",
+        "description": "Еда, продукты, здоровье и быт без мифов: что покупать, чего избегать, что реально полезно.",
+        "status": "active",
+        "publish_mode": "semi_auto",
+        "auto_publish_enabled": True,
+        "posting_frequency_per_day": 3,
+        "daily_post_limit": 5,
+    },
+    "era-money": {
+        "name": "По следам FT",
+        "category": "ft_watch",
+        "description": "Отдельный live-канал: только Financial Times, русский смысловой перевод и последствия.",
+        "status": "active",
+        "publish_mode": "semi_auto",
+        "auto_publish_enabled": True,
+        "posting_frequency_per_day": 5,
+        "daily_post_limit": 8,
+    },
+    "era-ai": {"name": "AI архив", "status": "paused", "auto_publish_enabled": False},
+    "era-health": {"name": "Здоровье архив", "status": "paused", "auto_publish_enabled": False},
 }
 
 INTEGRATIONS = [
@@ -140,8 +177,8 @@ LLM_MODELS = [
 ]
 
 PROMPTS = [
-    ("Editorial Director Prompt", "editorial", "You are ERA Editor-in-Chief. Enforce useful, sourced, non-clickbait editorial value. Variables: {{channel}} {{topic}}."),
-    ("Editor Prompt", "editor", "Write a concise useful MAX post for {{channel}}. Add why it matters, practical angle, and source-aware wording."),
+    ("Editorial Director Prompt", "editorial", "You are ERA Editor-in-Chief: a first-class journalist with a live editorial view of the world. Enforce source-backed, non-clickbait posts that sound human, not like AI briefs. Variables: {{channel}} {{topic}}."),
+    ("Editor Prompt", "editor", "Write a Russian MAX post for {{channel}} as a human journalist with an editorial point of view. Use facts as support, not as a template. Never use visible scaffolding like 'в чём суть', 'что произошло', 'почему это важно', 'что дальше', 'какие риски', or 'вывод'."),
     ("Scout Prompt", "scout", "Normalize and score candidate topics. Reject boring rewrite-only items."),
     ("Factcheck Prompt", "factcheck", "Check source reliability, dates, unsupported claims, and risk. Escalate health/finance/legal/political risk."),
     ("Risk Prompt", "risk", "Detect financial, medical, legal, political, and reputational risks before publication."),
@@ -171,8 +208,11 @@ Score risk on 0-100. Escalate unsupported claims, stale sources, medical/financi
         "Editor Agent Playbook Prompt",
         "editorial",
         2,
-        """You are ERA Editor / Chief Editor depending on the requested JSON schema. Use {{channel_playbook}} exactly.
-For EditorOutput: write a Russian MAX post with the channel required_structure, tone_of_voice, content pillars, banned patterns, CTA style, and max_post_length. Include why_useful, required_structure_used, and channel_playbook_checklist.
+        """You are ERA Editor / Chief Editor depending on the requested JSON schema. You are a first-class Russian journalist: you have a live editorial view, you actively discuss what is happening in the world, and you can carry that view through the channel.
+Use {{channel_playbook}} as internal taste only, not as visible headings.
+For EditorOutput: write a Russian MAX post as natural connected prose. The post must sound like a human channel author, not a summary generator. Facts should support the narrative; they must not become a labelled brief.
+Never use visible AI-summary scaffolding: "в чём суть", "что произошло", "почему это важно", "что дальше", "какие риски", "кому полезно", "простыми словами", "вывод".
+Start from a sharp observation, tension, or editorial read; then weave in source-backed context, consequence, and limitation. Include why_useful, required_structure_used, and channel_playbook_checklist.
 For ChiefEditorOutput: score editorial_value, factuality, clarity, usefulness, channel_fit, originality, risk, and overall quality on 0-100. Use decisions approve_for_review, rewrite_once, reject, or waiting_human. Never mark public publishing safe in Step 2.7.""",
     ),
     (
@@ -186,20 +226,21 @@ Return structured risk notes only. Escalate anything that would require human ap
 
 AGENT_DEFAULTS = {
     "human_owner": ("idle", 0, 0),
-    "media_director": ("paused", 0.20, 20000),
-    "intelligence_director": ("paused", 0.10, 15000),
-    "world_scout_agent": ("paused", 0.50, 30000),
-    "editor_in_chief": ("paused", 0.20, 20000),
-    "news_editor_agent": ("paused", 0.15, 15000),
-    "money_editor_agent": ("paused", 0.15, 15000),
+    "media_director": ("idle", 5.00, 500000),
+    "intelligence_director": ("idle", 2.00, 250000),
+    "world_scout_agent": ("idle", 5.00, 500000),
+    "editor_in_chief": ("idle", 10.00, 1000000),
+    "opinion_angle_editor": ("idle", 3.00, 300000),
+    "news_editor_agent": ("idle", 5.00, 500000),
+    "money_editor_agent": ("idle", 5.00, 500000),
     "ai_editor_agent": ("paused", 0.15, 15000),
     "health_editor_agent": ("paused", 0.15, 15000),
-    "food_editor_agent": ("paused", 0.15, 15000),
-    "quality_director": ("paused", 0.10, 12000),
-    "factcheck_agent": ("paused", 0.20, 20000),
-    "risk_control_agent": ("paused", 0.10, 10000),
-    "creative_director": ("paused", 0.05, 8000),
-    "visual_agent": ("paused", 0.10, 10000),
+    "food_editor_agent": ("idle", 5.00, 500000),
+    "quality_director": ("idle", 5.00, 500000),
+    "factcheck_agent": ("idle", 5.00, 500000),
+    "risk_control_agent": ("idle", 3.00, 300000),
+    "creative_director": ("idle", 2.00, 200000),
+    "visual_agent": ("idle", 3.00, 300000),
     "distribution_director": ("disabled", 0, 0),
     "publisher_agent": ("disabled", 0, 0),
     "growth_director": ("paused", 0.05, 8000),
@@ -212,6 +253,7 @@ ORG_AGENTS = [
     ("intelligence_director", "Intelligence Director Agent", "intelligence", "director", "media_director", "Owns topic discovery and source intelligence.", ["Manage discovery", "Prioritize sources"], {"can_collect_sources": True}, True, "0 */2 * * *"),
     ("world_scout_agent", "World Scout Agent", "scout", "agent", "intelligence_director", "Discovers, normalizes and clusters candidate topics.", ["Collect source items", "Cluster topics", "Route candidates"], {"can_create_topics": True}, True, "0 */3 * * *"),
     ("editor_in_chief", "Editor-in-Chief Agent", "editorial", "director", "media_director", "Owns editorial value and channel fit.", ["Set editorial standards", "Review post quality"], {"can_request_rewrite": True}, True, "*/45 * * * *"),
+    ("opinion_angle_editor", "Opinion / Angle Editor Agent", "editorial", "agent", "editor_in_chief", "Finds a strong editorial angle and keeps opinion visibly separated from facts.", ["Propose angles", "Mark editorial opinion", "Reject shapeless recap"], {"can_write_opinion": True, "can_publish": False}, False, ""),
     ("news_editor_agent", "News Editor Agent", "editor", "agent", "editor_in_chief", "Writes concise context for ERA Сейчас.", ["Explain what happened", "Add why it matters"], {"channel": "era-now"}, True, "0 */2 * * *"),
     ("money_editor_agent", "Money Editor Agent", "editor", "agent", "editor_in_chief", "Writes practical money and business posts.", ["Avoid advice claims", "Add business implication"], {"channel": "era-money"}, True, "0 */3 * * *"),
     ("ai_editor_agent", "AI Editor Agent", "editor", "agent", "editor_in_chief", "Writes practical AI and automation posts.", ["Explain AI tools", "Add implementation angle"], {"channel": "era-ai"}, True, "0 */2 * * *"),
@@ -251,8 +293,6 @@ def seed_settings() -> None:
             setting = db.execute(select(SystemSetting).where(SystemSetting.key == key)).scalar_one_or_none()
             if setting is None:
                 db.add(SystemSetting(key=key, value_json={"value": value}))
-            else:
-                setting.value_json = {"value": value}
         db.commit()
 
 
@@ -268,6 +308,12 @@ def seed_channels() -> None:
             channel.platform = "max"
             channel.status = "active"
             channel.auto_publish_enabled = False
+        for slug, data in PUBLICATION_CHANNEL_OVERRIDES.items():
+            channel = db.execute(select(Channel).where(Channel.slug == slug)).scalar_one_or_none()
+            if channel is None:
+                continue
+            for key, value in data.items():
+                setattr(channel, key, value)
         db.commit()
 
 
@@ -372,7 +418,7 @@ def seed_integrations() -> None:
                 db.add(platform_channel)
             platform_channel.integration_id = max_integration.id if max_integration else None
             platform_channel.publish_mode = "manual_copy" if channel.publish_mode == "manual" else "semi_auto_approval"
-            platform_channel.can_publish = False
+            platform_channel.can_publish = bool(platform_channel.can_publish)
             platform_channel.status = platform_channel.status or "not_connected"
         db.commit()
 

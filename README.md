@@ -1,15 +1,69 @@
 # ERA Media Factory
 
-AI-powered media orchestration platform for managing multiple MAX messenger channels.
+ERA Media Factory — маленькая AI-редакция для ведения MAX-канала «Нерв мира».
 
-## MVP stack
+Продукт помогает выпускающему редактору:
+
+- собирать новости из большого каталога источников;
+- видеть свежий радар событий;
+- получать редакционную повестку;
+- выбирать темы для публикации;
+- генерировать русскоязычные черновики;
+- проверять смысл, источники и неподтверждённые claims;
+- готовить медиа и MAX-упаковку;
+- публиковать в MAX только после ручного approval.
+
+## Главный принцип
+
+Это не автопаблишер.
+
+Публикация в MAX происходит только после явного действия человека. Автопубликация, Publisher Agent и автономная публикация не включены.
+
+## Editorial Quality Loop v1
+
+Перед approval/MAX каждый новый пост должен пройти обязательный quality loop:
+
+1. `source/topic`
+2. `evidence_pack`
+3. `meaning_card`
+4. `draft`
+5. `claim-check`
+6. `chief_editor`
+7. `quality_loop`
+
+Approval/MAX запрещены, если:
+
+- нет `quality_loop.version = "v1"`;
+- `quality_loop.passed != true`;
+- есть `blocking_issues`;
+- нет credible source/source_url;
+- high-risk/hard-news не имеет primary source;
+- generated image подаётся как доказательство;
+- quality loop упал по parser/model/timeout error.
+
+`quality_score` не перебивает blocking issues.
+
+## Канал v1
+
+Рабочий канал: «Нерв мира».
+
+Редакционный стандарт:
+
+- 5-8 постов в день;
+- коротко, живо, по-русски;
+- жёстко, но честно;
+- факт отдельно от оценки;
+- без шаблонов «Что произошло / Почему важно / Что дальше»;
+- без фейковых фото и неподтверждённых claims.
+
+## Stack
 
 - Backend: FastAPI, SQLAlchemy, Alembic, Pydantic
-- Queue: Redis + Celery + Celery Beat placeholder
+- Queue: Redis + worker/scheduler layer
 - Database: PostgreSQL
 - Frontend: Next.js / React
-- Agents: custom Python orchestrator with mock LLM provider
-- MAX: adapter interface with stub implementation
+- Agents: Python orchestrator + OpenAI provider
+- Publishing: MAX API, только ручная публикация после approval
 
 ## Start
 
@@ -29,32 +83,23 @@ Backend: http://localhost:8000
 Frontend: http://localhost:3000  
 Healthcheck: http://localhost:8000/health
 
-Useful MVP checks:
+## Useful checks
 
 ```bash
-make demo-data
 make smoke-test
+make smoke-editor-day
+make smoke-media-producer
+make smoke-max-packaging
+make smoke-owner-bot
+make smoke-editorial-quality-loop
 ```
 
-On backend startup Docker Compose runs:
+## Operator guide
 
-```bash
-alembic upgrade head
-python -m app.seed
+HTML-инструкция для сотрудника:
+
+```text
+/era-media-factory-guide.html
 ```
 
-## First pipeline
-
-The MVP pipeline is intentionally bounded and finite:
-
-1. Create or use a topic.
-2. Score the topic.
-3. Generate a draft with the mock LLM provider.
-4. Save the post to the review queue.
-5. Save task and agent run logs.
-
-Trigger it:
-
-```bash
-curl -X POST http://localhost:8000/api/topics/1/generate-draft
-```
+В ней описаны утренний сценарий, Редактор дня, Радар, Темы, Посты, Quality Loop, MAX, Telegram-бот и типовые ошибки.

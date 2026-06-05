@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import agent_runs, channels, control_plane, dashboard, dev, editions, operating_loop, org, posts, secrets, settings, source_items, sources, tasks, topics
+from app.api.routes import agent_runs, channels, control_plane, dashboard, dev, editions, growth, operating_loop, org, posts, secrets, settings, source_items, sources, tasks, topics
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(dashboard.router, tags=["dashboard"])
@@ -17,4 +17,5 @@ api_router.include_router(org.router, tags=["org"])
 api_router.include_router(settings.router, tags=["settings"])
 api_router.include_router(control_plane.router, tags=["control-plane"])
 api_router.include_router(operating_loop.router, tags=["operating-loop"])
+api_router.include_router(growth.router, prefix="/growth", tags=["growth"])
 api_router.include_router(secrets.router, prefix="/secrets", tags=["secrets"])

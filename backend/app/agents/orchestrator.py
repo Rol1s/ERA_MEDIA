@@ -622,15 +622,21 @@ def _editor_agent(
         f"Topic: {topic.title}\n"
         f"Research: {research.model_dump_json()}\n"
         f"Factcheck: {factcheck.model_dump_json()}\n"
-        f"Rewrite notes: {notes}\n"
-        "Write a concise Russian MAX post using the channel required structure, source-aware wording, and no unsupported claims."
+        f"Rewrite notes: {notes}\n\n"
+        "You are not a summarizer. You are a first-class Russian journalist with a lived-in editorial point of view. "
+        "You do not search for the news yourself in this step; you receive the source/research and turn it into a post that sounds like the channel already has an opinion about the world.\n\n"
+        "Write a Russian MAX post as natural connected prose. The reader should feel that a human editor is explaining the meaning of the event, not that an AI is filling a template.\n"
+        "Use the playbook as internal taste and narrative direction only. Do NOT print its formula or required_structure as headings.\n"
+        "Avoid all visible scaffolding and AI-summary phrases: 'в чём суть', 'что произошло', 'почему это важно', 'что дальше', 'какие риски', 'кому полезно', 'простыми словами', 'вывод'.\n"
+        "Do not write generic balanced boilerplate. Start with a sharp observation or tension. Then bring in the fact, context, consequence, and limitation naturally.\n"
+        "Keep source-aware wording and no unsupported claims. No numbered list unless the story truly demands it. No markdown headings inside body."
     )
     response = provider.generate(prompt, max_tokens=900)
     body = response.text
     if notes:
         body = (
-            f"{body}\n\nUseful angle added: focus on why this matters, what to watch next, "
-            "and one practical reader takeaway."
+            f"{body}\n\nРедакторская правка: сделать текст менее похожим на summary, "
+            "усилить живой угол, убрать любые шаблонные подзаголовки и оставить факты опорой, а не каркасом."
         )
     return EditorOutput(
         title=topic.title[:180],
