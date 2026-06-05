@@ -18,6 +18,7 @@ PROVIDER_SECRET_NAMES = {
     "anthropic": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "max": "MAX_BOT_TOKEN",
+    "telegram": "TELEGRAM_BOT_TOKEN",
 }
 
 

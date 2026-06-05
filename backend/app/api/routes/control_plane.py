@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -31,6 +32,8 @@ from app.models.all_models import (
     Topic,
 )
 from app.agents.llm_provider import LLMConfigurationError, provider_for_name
+from app.services.brain_mode import assert_provider_allowed
+from app.services.agent_role_files import apply_agent_role_files, role_file_preview
 from app.services.kanban import ISSUE_TRANSITIONS, KanbanStateMachine, allowed_transitions, issue_tree_progress
 from app.services.llm_config import resolve_prompt_template
 from app.services.notifications import create_notification, dispatch_notification
@@ -40,7 +43,7 @@ from app.services.settings import get_settings
 
 router = APIRouter()
 MAX_DEFAULT_BASE_URL = "https://platform-api.max.ru"
-PROVIDER_ENV = {**PROVIDER_SECRET_NAMES, "local_ollama_optional": "OLLAMA_BASE_URL", "mock": ""}
+PROVIDER_ENV = {**PROVIDER_SECRET_NAMES, "ollama": "OLLAMA_BASE_URL", "local_ollama_optional": "OLLAMA_BASE_URL", "mock": ""}
 
 
 def provider_readiness(db: Session, config: AgentConfig | None) -> dict[str, Any]:
@@ -48,7 +51,7 @@ def provider_readiness(db: Session, config: AgentConfig | None) -> dict[str, Any
         return {"ready_for_mock": False, "ready_for_dry_run": False, "reason": "Agent config is missing"}
     env_name = PROVIDER_ENV.get(config.provider, "")
     stored = get_secret_row(db, config.provider, env_name) if config.provider in PROVIDER_SECRET_NAMES else None
-    key_present = bool(stored and stored.status == "configured") or bool(os.getenv(env_name))
+    key_present = bool(stored and stored.status in {"configured", "verified"}) or bool(os.getenv(env_name))
     env_present = True if config.provider == "mock" else key_present
     model_enabled = bool(config.model)
     ready_for_mock = config.provider == "mock"
@@ -69,8 +72,8 @@ def provider_readiness(db: Session, config: AgentConfig | None) -> dict[str, Any
         "model": config.model,
         "required_env": env_name,
         "env_key_present": env_present,
-        "stored_key_present": bool(stored and stored.status == "configured"),
-        "structured_output": config.provider in {"mock", "openai", "anthropic", "gemini", "local_ollama_optional"},
+        "stored_key_present": bool(stored and stored.status in {"configured", "verified"}),
+        "structured_output": config.provider in {"mock", "openai", "anthropic", "gemini", "ollama", "local_ollama_optional"},
         "budget_available": config.daily_budget_usd != 0,
         "reason": "; ".join(reasons) if reasons else "ready",
     }
@@ -84,9 +87,35 @@ def _max_get_me(base_url: str, token: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            return {"ok": True, "status": response.status}
+            return {"ok": True, "status": response.status, "body": response.read().decode("utf-8", errors="replace")[:600]}
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "status": exc.code}
+        return {"ok": False, "status": exc.code, "body": exc.read().decode("utf-8", errors="replace")[:600]}
+
+
+def _max_get_chat(base_url: str, token: str, chat_id: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/chats/{chat_id}",
+        headers={"Authorization": token, "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return {"ok": True, "status": response.status, "body": response.read().decode("utf-8", errors="replace")[:1200]}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "status": exc.code, "body": exc.read().decode("utf-8", errors="replace")[:1200]}
+
+
+def _max_get_chats(base_url: str, token: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/chats?count=100",
+        headers={"Authorization": token, "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return {"ok": True, "status": response.status, "body": response.read().decode("utf-8", errors="replace")[:12000]}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "status": exc.code, "body": exc.read().decode("utf-8", errors="replace")[:12000]}
 
 
 class IntegrationUpdate(BaseModel):
@@ -102,6 +131,12 @@ class PlatformChannelUpdate(BaseModel):
     status: str | None = None
     publish_mode: str | None = None
     can_publish: bool | None = None
+
+
+class MaxChannelStartRequest(BaseModel):
+    chat_id: str
+    title: str | None = None
+    link: str | None = None
 
 
 class IssueUpdate(BaseModel):
@@ -146,6 +181,10 @@ class AgentConfigUpdate(BaseModel):
 
 class BulkOpenAIContentAgentsRequest(BaseModel):
     model: str | None = None
+
+
+class ApplyAgentRoleFilesRequest(BaseModel):
+    confirm: bool = False
 
 
 class PromptTemplateCreate(BaseModel):
@@ -201,6 +240,50 @@ def platform_payload(item: PlatformChannel) -> dict[str, Any]:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
+
+
+def channel_payload(item: Channel) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "slug": item.slug,
+        "platform": item.platform,
+        "category": item.category,
+        "description": item.description,
+        "tone_of_voice": item.tone_of_voice,
+        "audience_description": item.audience_description,
+        "topics_allowed": item.topics_allowed,
+        "topics_forbidden": item.topics_forbidden,
+        "posting_frequency_per_day": item.posting_frequency_per_day,
+        "daily_post_limit": item.daily_post_limit,
+        "publish_mode": item.publish_mode,
+        "auto_publish_enabled": item.auto_publish_enabled,
+        "risk_threshold": item.risk_threshold,
+        "channel_mode": item.channel_mode,
+        "relay_mode": item.relay_mode,
+        "relay_source_ids": item.relay_source_ids,
+        "relay_publish_delay_minutes": item.relay_publish_delay_minutes,
+        "relay_max_posts_per_day": item.relay_max_posts_per_day,
+        "status": item.status,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def _slugify_channel_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "max-channel"
+
+
+def _unique_channel_slug(db: Session, base: str, *, existing_channel_id: int | None = None) -> str:
+    slug = base
+    index = 2
+    while True:
+        existing = db.execute(select(Channel).where(Channel.slug == slug)).scalar_one_or_none()
+        if existing is None or existing.id == existing_channel_id:
+            return slug
+        slug = f"{base}-{index}"
+        index += 1
 
 
 def notification_payload(item: Notification) -> dict[str, Any]:
@@ -325,17 +408,7 @@ def update_integration(integration_id: int, payload: IntegrationUpdate, db: Sess
     item = db.get(Integration, integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if item.provider == "max":
-        if "secret_ref" in updates and updates["secret_ref"] != PROVIDER_SECRET_NAMES["max"]:
-            raise HTTPException(status_code=400, detail=f"secret_ref for max must be {PROVIDER_SECRET_NAMES['max']}")
-        if "config_json" in updates and isinstance(updates["config_json"], dict):
-            config = dict(updates["config_json"])
-            config["MAX_API_BASE_URL"] = MAX_DEFAULT_BASE_URL
-            config.pop("api_base_url", None)
-            config.pop("allow_custom_base_url", None)
-            updates["config_json"] = config
-    for key, value in updates.items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
     log_activity(
         db,
@@ -362,8 +435,11 @@ def test_integration(integration_id: int, db: Session = Depends(get_db)) -> dict
     test_result: dict[str, Any] = {}
     if item.provider == "max":
         config = dict(item.config_json or {})
-        base_url = MAX_DEFAULT_BASE_URL
-        token = resolve_secret_value(db, "max", PROVIDER_SECRET_NAMES["max"])
+        base_url = config.get("MAX_API_BASE_URL") or config.get("api_base_url") or MAX_DEFAULT_BASE_URL
+        try:
+            token = resolve_secret_value(db, "max", item.secret_ref or "MAX_BOT_TOKEN")
+        except Exception:
+            token = os.getenv(item.secret_ref or "MAX_BOT_TOKEN")
         dry_run_payload = {"method": "POST", "url": f"{base_url.rstrip('/')}/messages", "headers": {"Authorization": "***"}, "body": {"chat_id": config.get("default_admin_chat_id"), "text": "ERA dry-run admin test"}}
         test_result = {
             "base_url": base_url,
@@ -371,9 +447,12 @@ def test_integration(integration_id: int, db: Session = Depends(get_db)) -> dict
             "token_status": "found" if token else "missing",
             "dry_run_message_payload": dry_run_payload,
         }
-        if not token:
+        if base_url != MAX_DEFAULT_BASE_URL and not config.get("allow_custom_base_url"):
             ok = False
-            error = f"Bot token env {PROVIDER_SECRET_NAMES['max']} is not configured"
+            error = "MAX_API_BASE_URL must be https://platform-api.max.ru unless allow_custom_base_url=true"
+        elif not item.secret_ref or not token:
+            ok = False
+            error = f"Bot token env {item.secret_ref or '(empty)'} is not configured"
         else:
             me_result = _max_get_me(base_url, token)
             test_result["me"] = me_result
@@ -474,8 +553,168 @@ def test_admin_message(integration_id: int, db: Session = Depends(get_db)) -> di
 
 @router.get("/platform-channels", response_model=None)
 def list_platform_channels(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    max_integration = db.execute(select(Integration).where(Integration.provider == "max")).scalar_one_or_none()
+    channels = db.execute(select(Channel).order_by(Channel.id)).scalars().all()
+    for channel in channels:
+        existing = db.execute(
+            select(PlatformChannel).where(
+                PlatformChannel.channel_id == channel.id,
+                PlatformChannel.platform == "max",
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                PlatformChannel(
+                    channel_id=channel.id,
+                    platform="max",
+                    integration_id=max_integration.id if max_integration else None,
+                    publish_mode="manual_copy",
+                    can_publish=False,
+                    status="not_connected",
+                )
+            )
+    db.commit()
     items = db.execute(select(PlatformChannel).order_by(PlatformChannel.channel_id)).scalars().all()
     return [platform_payload(item) for item in items]
+
+
+@router.get("/platform-channels/max/discover", response_model=None)
+def discover_max_chats(db: Session = Depends(get_db)) -> dict[str, Any]:
+    integration = db.execute(select(Integration).where(Integration.provider == "max")).scalar_one_or_none()
+    base_url = ((integration.config_json or {}).get("MAX_API_BASE_URL") if integration else None) or MAX_DEFAULT_BASE_URL
+    token = ""
+    if integration:
+        try:
+            token = resolve_secret_value(db, "max", integration.secret_ref or "MAX_BOT_TOKEN")
+        except Exception:
+            token = os.getenv(integration.secret_ref or "MAX_BOT_TOKEN") or ""
+    if not token:
+        raise HTTPException(status_code=422, detail="MAX bot token is missing. Add MAX_BOT_TOKEN first.")
+    result = _max_get_chats(base_url, token)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=f"MAX chats discovery failed: HTTP {result.get('status')} {result.get('body', '')[:300]}")
+    try:
+        import json
+
+        body = json.loads(result.get("body") or "{}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MAX returned invalid JSON: {exc}") from exc
+    chats = body.get("chats") or body.get("items") or []
+    safe_chats = [
+        {
+            "chat_id": item.get("chat_id"),
+            "type": item.get("type"),
+            "status": item.get("status"),
+            "title": item.get("title"),
+            "link": item.get("link"),
+            "is_public": item.get("is_public"),
+            "participants_count": item.get("participants_count"),
+        }
+        for item in chats
+        if isinstance(item, dict)
+    ]
+    log_activity(
+        db,
+        actor_type="system",
+        actor_id=None,
+        event_type="max_chats_discovered",
+        entity_type="integration",
+        entity_id=integration.id if integration else None,
+        message=f"MAX chats discovery returned {len(safe_chats)} chats. No publishing was called.",
+        metadata={"count": len(safe_chats), "publishing_enabled": False},
+    )
+    db.commit()
+    return {"ok": True, "chats": safe_chats, "marker": body.get("marker"), "max_called": False, "published": False}
+
+
+@router.post("/platform-channels/max/start", response_model=None)
+def start_max_channel(payload: MaxChannelStartRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    chat_id = str(payload.chat_id or "").strip()
+    if not chat_id:
+        raise HTTPException(status_code=422, detail="MAX chat_id is required")
+
+    integration = db.execute(select(Integration).where(Integration.provider == "max")).scalar_one_or_none()
+    platform = db.execute(
+        select(PlatformChannel).where(
+            PlatformChannel.platform == "max",
+            PlatformChannel.external_chat_id == chat_id,
+        )
+    ).scalar_one_or_none()
+
+    if platform:
+        channel = db.get(Channel, platform.channel_id)
+        if channel is None:
+            channel = Channel(
+                name=(payload.title or f"MAX {chat_id}").strip()[:120],
+                slug=_unique_channel_slug(db, _slugify_channel_name(payload.title or f"max-{chat_id}")),
+                platform="max",
+                category="news",
+                description="",
+                channel_mode="newsroom",
+                publish_mode="manual",
+                auto_publish_enabled=False,
+                status="active",
+            )
+            db.add(channel)
+            db.flush()
+            platform.channel_id = channel.id
+    else:
+        title = (payload.title or f"MAX {chat_id}").strip()[:120]
+        base_slug = _slugify_channel_name(payload.title or f"max-{chat_id}")
+        channel = Channel(
+            name=title,
+            slug=_unique_channel_slug(db, base_slug),
+            platform="max",
+            category="news",
+            description="",
+            channel_mode="newsroom",
+            publish_mode="manual",
+            auto_publish_enabled=False,
+            status="active",
+        )
+        db.add(channel)
+        db.flush()
+        platform = PlatformChannel(
+            channel_id=channel.id,
+            platform="max",
+            external_chat_id=chat_id,
+            external_channel_url=(payload.link or "").strip(),
+            integration_id=integration.id if integration else None,
+            status="not_connected",
+            publish_mode="manual_copy",
+            can_publish=False,
+        )
+        db.add(platform)
+        db.flush()
+
+    channel.status = "active"
+    channel.platform = "max"
+    channel.channel_mode = "newsroom"
+    channel.publish_mode = "manual"
+    channel.auto_publish_enabled = False
+    platform.external_chat_id = chat_id
+    if payload.link:
+        platform.external_channel_url = payload.link.strip()
+    if integration and not platform.integration_id:
+        platform.integration_id = integration.id
+    if platform.publish_mode == "auto_publish":
+        platform.publish_mode = "manual_copy"
+        platform.can_publish = False
+
+    log_activity(
+        db,
+        actor_type="human",
+        actor_id=None,
+        event_type="max_channel_started",
+        entity_type="channel",
+        entity_id=channel.id,
+        message=f"MAX channel workspace started for {channel.name}. No publishing or agents were called.",
+        metadata={"chat_id": chat_id, "platform_channel_id": platform.id, "max_called": False, "llm_called": False, "publishing_called": False},
+    )
+    db.commit()
+    db.refresh(channel)
+    db.refresh(platform)
+    return {"ok": True, "channel": channel_payload(channel), "platform_channel": platform_payload(platform), "max_called": False, "published": False}
 
 
 @router.patch("/platform-channels/{platform_channel_id}", response_model=None)
@@ -507,15 +746,36 @@ def test_platform_channel(platform_channel_id: int, db: Session = Depends(get_db
     if item is None:
         raise HTTPException(status_code=404, detail="Platform channel not found")
     item.last_test_at = datetime.now(UTC)
-    if not item.external_chat_id:
+    integration = db.get(Integration, item.integration_id) if item.integration_id else db.execute(select(Integration).where(Integration.provider == "max")).scalar_one_or_none()
+    base_url = ((integration.config_json or {}).get("MAX_API_BASE_URL") if integration else None) or MAX_DEFAULT_BASE_URL
+    token = ""
+    if integration:
+        try:
+            token = resolve_secret_value(db, "max", integration.secret_ref or "MAX_BOT_TOKEN")
+        except Exception:
+            token = os.getenv(integration.secret_ref or "MAX_BOT_TOKEN") or ""
+    result: dict[str, Any] = {"external_call": False, "base_url": base_url}
+    if not token:
+        item.status = "failed"
+        item.last_error = "MAX bot token is missing. Add MAX_BOT_TOKEN in Integrations first."
+        ok = False
+    elif not item.external_chat_id:
         item.status = "failed"
         item.last_error = "MAX chat_id/channel_id is empty"
         ok = False
     else:
-        item.status = "connected"
-        item.last_success_at = datetime.now(UTC)
-        item.last_error = ""
-        ok = True
+        result = _max_get_chat(base_url, token, item.external_chat_id.strip())
+        result["external_call"] = True
+        ok = bool(result.get("ok"))
+        if ok:
+            item.status = "connected"
+            item.last_success_at = datetime.now(UTC)
+            item.last_error = ""
+            item.can_publish = True
+            item.publish_mode = "semi_auto_approval" if item.publish_mode in {"manual_copy", "auto_publish"} else item.publish_mode
+        else:
+            item.status = "failed"
+            item.last_error = f"MAX chat check failed: HTTP {result.get('status')} {result.get('body', '')[:300]}"
     log_activity(
         db,
         actor_type="system",
@@ -524,6 +784,7 @@ def test_platform_channel(platform_channel_id: int, db: Session = Depends(get_db
         entity_type="platform_channel",
         entity_id=item.id,
         message=f"Platform channel test {'success' if ok else 'failed'} for channel #{item.channel_id}",
+        metadata={"max_result": result, "publishing_enabled": bool(ok)},
     )
     if not ok:
         create_notification(
@@ -535,7 +796,7 @@ def test_platform_channel(platform_channel_id: int, db: Session = Depends(get_db
             entity_id=item.id,
         )
     db.commit()
-    return {"ok": ok, "platform_channel": platform_payload(item)}
+    return {"ok": ok, "result": result, "platform_channel": platform_payload(item)}
 
 
 @router.get("/notifications", response_model=None)
@@ -543,6 +804,8 @@ def list_notifications(status: str | None = None, db: Session = Depends(get_db))
     stmt = select(Notification).order_by(Notification.created_at.desc()).limit(200)
     if status:
         stmt = stmt.where(Notification.status == status)
+    else:
+        stmt = stmt.where(Notification.status != "archived")
     items = db.execute(stmt).scalars().all()
     return [notification_payload(item) for item in items]
 
@@ -573,9 +836,40 @@ def mark_notification_read(notification_id: int, db: Session = Depends(get_db)) 
     return notification_payload(item)
 
 
+@router.post("/notifications/archive-all", response_model=None)
+def archive_all_notifications(db: Session = Depends(get_db)) -> dict[str, int]:
+    items = db.execute(select(Notification).where(Notification.status != "archived")).scalars().all()
+    now = datetime.now(UTC)
+    for item in items:
+        item.status = "archived"
+        if item.read_at is None:
+            item.read_at = now
+    log_activity(
+        db,
+        actor_type="human",
+        actor_id=None,
+        event_type="notifications_archived",
+        entity_type="notification",
+        entity_id=None,
+        message=f"Archived {len(items)} notifications from operator workspace.",
+    )
+    db.commit()
+    return {"archived": len(items)}
+
+
 @router.get("/issues", response_model=None)
-def list_issues(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    items = db.execute(select(Issue).order_by(Issue.created_at.desc()).limit(200)).scalars().all()
+def list_issues(show_closed: bool = Query(False), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    stmt = (
+        select(Issue)
+        .where(Issue.issue_type != "smoke", ~Issue.title.ilike("Smoke %"))
+        .order_by(Issue.created_at.desc())
+        .limit(200)
+    )
+    if not show_closed:
+        stmt = stmt.where(Issue.status.notin_(["completed", "failed", "cancelled"]))
+    items = db.execute(
+        stmt
+    ).scalars().all()
     return [issue_payload(item) for item in items]
 
 
@@ -658,22 +952,29 @@ def create_sub_issue(issue_id: int, payload: SubIssueCreate, db: Session = Depen
     parent = db.get(Issue, issue_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="Parent issue not found")
+    ceo = db.execute(select(OrgAgent).where(OrgAgent.name == "human_owner")).scalar_one_or_none()
+    expansion_text = f"{payload.title} {payload.description} {payload.issue_type}".lower()
+    needs_ceo = any(
+        token in expansion_text
+        for token in ["org", "organization", "структур", "агент", "agent", "director", "role", "роль", "расшир"]
+    )
     item = Issue(
         title=payload.title,
         description=payload.description,
         issue_type=payload.issue_type,
         owner_agent_id=payload.owner_agent_id,
-        reviewer_agent_id=payload.reviewer_agent_id or parent.reviewer_agent_id,
+        reviewer_agent_id=ceo.id if needs_ceo and ceo else payload.reviewer_agent_id or parent.reviewer_agent_id,
         related_channel_id=parent.related_channel_id,
         related_topic_id=parent.related_topic_id,
         related_post_id=parent.related_post_id,
         priority=payload.priority,
-        status="backlog",
+        status="waiting_human" if needs_ceo else "backlog",
         parent_issue_id=parent.id,
         root_issue_id=parent.root_issue_id or parent.id,
         delegation_level=parent.delegation_level + 1,
-        next_action="Owner should move this issue to ready when scope is clear.",
-        progress_json={"manual_delegation": True},
+        next_action="CEO/Human Owner must approve org-structure expansion before work starts." if needs_ceo else "Owner should move this issue to ready when scope is clear.",
+        required_human_action="Approve, reject or simplify this org-structure expansion." if needs_ceo else "",
+        progress_json={"manual_delegation": True, "ceo_approval_required": needs_ceo},
     )
     db.add(item)
     db.flush()
@@ -838,7 +1139,23 @@ def agent_detail(agent_id: int, db: Session = Depends(get_db)) -> dict[str, Any]
 @router.get("/llm-models", response_model=None)
 def list_llm_models(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
     items = db.execute(select(LLMModel).order_by(LLMModel.provider, LLMModel.model)).scalars().all()
-    return [llm_model_payload(item) for item in items]
+    visible = [item for item in items if item.provider != "local_ollama_optional"]
+    payloads = [llm_model_payload(item) for item in visible]
+    if not any(item["provider"] == "ollama" and item["model"] == "gemma4:e4b" for item in payloads):
+        payloads.append(
+            {
+                "id": 0,
+                "provider": "ollama",
+                "model": "gemma4:e4b",
+                "label": "Local Gemma 4 E4B via Ollama",
+                "input_cost_per_1m": 0,
+                "output_cost_per_1m": 0,
+                "supports_tools": False,
+                "supports_json_schema": True,
+                "enabled": True,
+            }
+        )
+    return payloads
 
 
 @router.get("/agent-configs", response_model=None)
@@ -852,17 +1169,7 @@ def update_agent_config(config_id: int, payload: AgentConfigUpdate, db: Session 
     item = db.get(AgentConfig, config_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Agent config not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if item.provider == "max":
-        if "secret_ref" in updates and updates["secret_ref"] != PROVIDER_SECRET_NAMES["max"]:
-            raise HTTPException(status_code=400, detail=f"secret_ref for max must be {PROVIDER_SECRET_NAMES['max']}")
-        if "config_json" in updates and isinstance(updates["config_json"], dict):
-            config = dict(updates["config_json"])
-            config["MAX_API_BASE_URL"] = MAX_DEFAULT_BASE_URL
-            config.pop("api_base_url", None)
-            config.pop("allow_custom_base_url", None)
-            updates["config_json"] = config
-    for key, value in updates.items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
     log_activity(
         db,
@@ -886,6 +1193,8 @@ def test_agent_config(config_id: int, db: Session = Depends(get_db)) -> dict[str
     provider_name = "mock" if settings["system_mode"] == "mock" else item.provider
     model = "mock" if provider_name == "mock" else item.model
     try:
+        if settings["system_mode"] != "mock":
+            assert_provider_allowed(db, provider_name, operator_path=True)
         api_key = None
         if provider_name in PROVIDER_SECRET_NAMES:
             api_key = resolve_secret_value(db, provider_name, PROVIDER_SECRET_NAMES[provider_name])
@@ -931,10 +1240,35 @@ def test_agent_config(config_id: int, db: Session = Depends(get_db)) -> dict[str
     return {"ok": ok, "error": error, "result": result, "config": agent_config_payload(item)}
 
 
+@router.get("/agent-configs/role-files/preview", response_model=None)
+def preview_agent_role_files(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return role_file_preview(db)
+
+
+@router.post("/agent-configs/role-files/apply", response_model=None)
+def apply_agent_role_files_route(payload: ApplyAgentRoleFilesRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = apply_agent_role_files(db, confirm=payload.confirm)
+    if payload.confirm and result.get("ok"):
+        log_activity(
+            db,
+            actor_type="human",
+            actor_id=None,
+            event_type="agent_role_files_applied",
+            entity_type="agent_config",
+            entity_id=None,
+            message=f"Applied role-file prompts to {len(result.get('applied') or [])} agents.",
+            metadata={"version": result.get("version"), "applied": result.get("applied")},
+        )
+        db.commit()
+    else:
+        db.rollback()
+    return result
+
+
 @router.post("/agent-configs/content-agents/openai", response_model=None)
 def configure_content_agents_for_openai(payload: BulkOpenAIContentAgentsRequest | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
     secret = get_secret_row(db, "openai", "OPENAI_API_KEY")
-    if secret is None or secret.status != "configured":
+    if secret is None or secret.status not in {"configured", "verified"}:
         raise HTTPException(status_code=422, detail="OpenAI ключ не добавлен. Сначала сохраните ключ в Интеграциях.")
     integration = db.execute(select(Integration).where(Integration.provider == "openai")).scalars().first()
     requested_model = payload.model if payload else None

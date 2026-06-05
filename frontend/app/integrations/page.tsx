@@ -3,13 +3,14 @@
 import { CheckCircle2, PlugZap, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, AgentConfig, Integration, LLMModel, OrgAgent, SecretStatus, SecretsStatus, SystemSettings } from "@/lib/api";
-import { modelLabel, SafeActionButton, SystemReadinessPanel, Toast } from "@/components/operator";
+import { modelLabel, SafeActionButton, secretConfigured, SystemReadinessPanel, Toast } from "@/components/operator";
 
 const providers = [
   { key: "openai", name: "OpenAI", secret: "OPENAI_API_KEY", primary: true },
   { key: "anthropic", name: "Anthropic", secret: "ANTHROPIC_API_KEY", primary: false },
   { key: "gemini", name: "Gemini", secret: "GEMINI_API_KEY", primary: false },
   { key: "max", name: "MAX", secret: "MAX_BOT_TOKEN", primary: false },
+  { key: "telegram", name: "Telegram Owner Bot", secret: "TELEGRAM_BOT_TOKEN", primary: false },
 ] as const;
 
 function secretText(secret?: SecretStatus) {
@@ -85,9 +86,10 @@ export default function IntegrationsPage() {
     const model = integration?.config_json?.model || "";
     const selectedModel = models.find((item) => item.provider === provider.key && item.model === model);
     const modelOptions = models.filter((item) => item.provider === provider.key && item.enabled);
-    const isEditing = editing[inputKey] || secret?.status !== "configured";
-    const canTest = secret?.status === "configured" || secret?.status === "failed";
-    const testBlocked = settings?.system_mode === "mock" ? "Переключите систему в dry_run для проверки реального провайдера." : !canTest ? "Сначала добавьте ключ." : "";
+    const configured = secretConfigured(secret?.status);
+    const isEditing = editing[inputKey] || !configured;
+    const canTest = configured || secret?.status === "failed";
+    const testBlocked = settings?.system_mode === "mock" ? "Переключите систему в рабочий режим для проверки внешнего провайдера." : !canTest ? "Сначала добавьте ключ." : "";
 
     return (
       <article className={`row-card ${provider.primary ? "primary-card" : ""}`} key={provider.key}>
@@ -96,7 +98,7 @@ export default function IntegrationsPage() {
             <h3>{provider.name}</h3>
             <p className="muted">{provider.key === "max" ? "Токен можно сохранить, но публикация наружу остается выключенной." : "Ключ хранится только на backend в зашифрованном виде."}</p>
           </div>
-          <span className={`status ${secret?.status || "missing"}`}>{secret?.status === "configured" ? "настроено" : "не настроено"}</span>
+          <span className={`status ${secret?.status || "missing"}`}>{secret?.status === "verified" ? "проверено" : configured ? "настроено" : "не настроено"}</span>
         </div>
 
         <div className="wizard-grid">
@@ -111,7 +113,7 @@ export default function IntegrationsPage() {
                   className="input"
                   type="password"
                   autoComplete="new-password"
-                  placeholder={secret?.status === "configured" ? "Вставьте новый ключ для замены" : "Вставьте ключ"}
+                  placeholder={configured ? "Вставьте новый ключ для замены" : "Вставьте ключ"}
                   value={secretInputs[inputKey] || ""}
                   onChange={(event) => setSecretInputs((current) => ({ ...current, [inputKey]: event.target.value }))}
                 />
@@ -129,12 +131,12 @@ export default function IntegrationsPage() {
                       setEditing((current) => ({ ...current, [inputKey]: false }));
                     }, "Ключ сохранен. Поле очищено.")}
                   >
-                    {secret?.status === "configured" ? "Сохранить замену" : "Добавить ключ"}
+                    {configured ? "Сохранить замену" : "Добавить ключ"}
                   </SafeActionButton>
                 )}
                 <SafeActionButton
                   className="btn danger"
-                  disabledReason={secret?.status !== "configured" && secret?.status !== "failed" ? "Ключ уже отсутствует." : ""}
+                  disabledReason={!configured && secret?.status !== "failed" ? "Ключ уже отсутствует." : ""}
                   disabled={busy === `delete-${inputKey}`}
                   onClick={() => run(`delete-${inputKey}`, async () => { await api.deleteSecret(provider.key, provider.secret); }, "Ключ удален")}
                 >
@@ -143,7 +145,7 @@ export default function IntegrationsPage() {
               </div>
             </section>
 
-            {provider.key !== "max" && integration ? (
+            {provider.key !== "max" && provider.key !== "telegram" && integration ? (
               <section className="wizard-section">
                 <h4>2. Модель</h4>
                 <select className="select" value={model} onChange={(event) => run(`model-${provider.key}`, async () => saveModel(integration, event.target.value), "Модель сохранена")}>
@@ -162,7 +164,7 @@ export default function IntegrationsPage() {
           <div>
             <section className="wizard-section">
               <h4>3. Проверка</h4>
-              <p className="muted">Запускает маленький structured output test. В mock-режиме реальные вызовы заблокированы.</p>
+              <p className="muted">Запускает маленькую проверку ответа. В безопасном режиме реальные внешние вызовы заблокированы.</p>
               <div className="mini-log">
                 <div>Последняя проверка: {secret?.last_test_at ? new Date(secret.last_test_at).toLocaleString("ru-RU") : "не было"}</div>
                 <div>Последний успех: {secret?.last_success_at ? new Date(secret.last_success_at).toLocaleString("ru-RU") : "не было"}</div>
@@ -178,10 +180,10 @@ export default function IntegrationsPage() {
               </SafeActionButton>
             </section>
 
-            {provider.key === "openai" ? (
+            {provider.key === "openai" && settings?.ai_brain_mode === "openai" ? (
               <section className="wizard-section">
                 <h4>4. Использовать в агентах</h4>
-                <p className="muted">Настроит Research, Factcheck, Editor и Chief Editor на выбранную модель OpenAI. Publisher останется выключенным.</p>
+                <p className="muted">Настроит разведку, фактчек, редактора и главного редактора на выбранный облачный движок. Publisher останется выключенным.</p>
                 <ul>
                   <li>Research Agent</li>
                   <li>Factcheck Agent</li>
@@ -189,11 +191,11 @@ export default function IntegrationsPage() {
                   <li>Chief Editor Agent</li>
                 </ul>
                 <SafeActionButton
-                  disabledReason={secret?.status !== "configured" ? "Сначала добавьте OpenAI ключ." : !openaiModel ? "Сначала выберите модель OpenAI." : ""}
+                  disabledReason={!secretConfigured(secret?.status) ? "Сначала добавьте ключ." : !openaiModel ? "Сначала выберите модель." : ""}
                   disabled={busy === "bulk-openai"}
-                  onClick={() => run("bulk-openai", async () => { await api.configureContentAgentsOpenAI(openaiModel); }, "Content agents настроены для OpenAI dry-run")}
+                  onClick={() => run("bulk-openai", async () => { await api.configureContentAgentsOpenAI(openaiModel); }, "Редакционные агенты настроены")}
                 >
-                  <CheckCircle2 size={16} /> Применить OpenAI к content agents
+                  <CheckCircle2 size={16} /> Применить к редакционным агентам
                 </SafeActionButton>
               </section>
             ) : null}
@@ -208,7 +210,7 @@ export default function IntegrationsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Интеграции</h1>
-          <p className="page-subtitle">Здесь оператор добавляет ключ, выбирает модель, проверяет structured output и применяет OpenAI к агентам. Полные секреты никогда не возвращаются в интерфейс.</p>
+          <p className="page-subtitle">Здесь оператор подключает внешние сервисы: MAX, Telegram и при необходимости облачных провайдеров. Полные секреты никогда не возвращаются в интерфейс.</p>
         </div>
         <span className={`status ${settings?.system_mode === "dry_run" ? "active" : "warning"}`}>{settings?.system_mode || "загрузка"}</span>
       </div>
