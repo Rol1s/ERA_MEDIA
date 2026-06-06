@@ -513,6 +513,12 @@ def publish_to_max(post_id: int, payload: MaxPublishRequest, db: Session = Depen
             raise HTTPException(status_code=502, detail=f"MAX media preparation failed: {exc}") from exc
     if local_media_path(post.image_url) is None:
         raise HTTPException(status_code=422, detail="MAX post requires media before publishing")
+    visual_generation = (post.structured_outputs_json or {}).get("visual_generation") or {}
+    if post.image_generation_status == "local_fallback_ready" or visual_generation.get("provider") == "local_fallback":
+        raise HTTPException(
+            status_code=422,
+            detail="MAX post has only local fallback media; replace with source preview or approved generated image before publishing",
+        )
 
     text = max_text_for_publish(db, post)
     if len(text) > 4000:
